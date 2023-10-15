@@ -1,0 +1,208 @@
+services:
+  # Media player
+  jellyfin:
+    image: jellyfin/jellyfin
+    restart: unless-stopped
+    user: ${PUID}:${PGID}
+    environment:
+      - JELLYFIN_PublishedServerUrl=https://jellyfin.${PUBLIC_DOMAIN}
+    volumes:
+      - ./config/jellyfin:/config
+      - ./cache/jellyfin:/cache
+      - media:/media
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      - traefik.http.routers.jellyfin.entrypoints=websecure
+      - traefik.http.routers.jellyfin.rule=Host(`jellyfin.${PUBLIC_DOMAIN}`)
+      - traefik.http.routers.jellyfin.tls.certresolver=myresolver
+      - traefik.http.routers.jellyfin-local.entrypoints=websecure
+      - traefik.http.routers.jellyfin-local.rule=Host(`jellyfin.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.jellyfin-local.tls.certresolver=myresolver
+      - traefik.http.services.service-jellyfin.loadbalancer.server.port=8096
+    networks:
+      - web
+
+  # Requests manager
+  jellyseerr:
+    image: fallenbagel/jellyseerr:latest
+    environment:
+      - LOG_LEVEL=debug
+      - TZ=${TZ}
+    volumes:
+      - ./config/jellyseerr:/app/config
+    restart: unless-stopped
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      - traefik.http.routers.jellyseerr-local.entrypoints=websecure
+      - traefik.http.routers.jellyseerr-local.rule=Host(`jellyseerr.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.jellyseerr-local.tls.certresolver=myresolver
+      - traefik.http.services.service-jellyseerr.loadbalancer.server.port=5055
+    networks:
+      - web
+
+  # Invites manager
+  wizarr:
+    image: ghcr.io/wizarrrr/wizarr:v2
+    restart: unless-stopped
+    environment:
+      - APP_URL=https://wizarr.${LOCAL_DOMAIN}
+      - TZ=${TZ}
+    volumes:
+      - ./config/wizarr/database:/data/database
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      - traefik.http.routers.wizarr-local.entrypoints=websecure
+      - traefik.http.routers.wizarr-local.rule=Host(`wizarr.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.wizarr-local.tls.certresolver=myresolver
+      - traefik.http.services.service-wizarr.loadbalancer.server.port=5690
+    networks:
+      - web
+
+  # TV Shows manager
+  sonarr:
+    image: linuxserver/sonarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - media:/media
+      - ./config/sonarr:/config
+      - downloads:/downloads
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      - traefik.http.routers.sonarr-local.entrypoints=websecure
+      - traefik.http.routers.sonarr-local.rule=Host(`sonarr.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.sonarr-local.tls.certresolver=myresolver
+      - traefik.http.services.service-sonarr.loadbalancer.server.port=8989
+    networks:
+      - web
+
+  # Movies manager
+  radarr:
+    image: linuxserver/radarr
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - media:/media
+      - ./config/radarr:/config
+      - downloads:/downloads
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      - traefik.http.routers.radarr-local.entrypoints=websecure
+      - traefik.http.routers.radarr-local.rule=Host(`radarr.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.radarr-local.tls.certresolver=myresolver
+      - traefik.http.services.service-radarr.loadbalancer.server.port=7878
+    networks:
+      - web
+
+  # Indexer manager/proxy
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ./config/prowlarr:/config
+    restart: unless-stopped
+    depends_on:
+      - vpn
+    network_mode: service:vpn
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # Downloads client
+  deluge:
+    image: linuxserver/deluge
+    restart: unless-stopped
+    depends_on:
+      - vpn
+    network_mode: service:vpn
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - ./config/deluge:/config
+      - downloads:/downloads
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # VPN client
+  vpn:
+    image: jordanpotter/wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - /lib/modules:/lib/modules
+      - ./config/vpn:/etc/wireguard
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv6.conf.all.disable_ipv6=0
+    networks:
+      - isolated_torrents
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+
+  # Proxy to access download client and indexer manager
+  vpn-proxy:
+    image: nginx
+    restart: unless-stopped
+    volumes:
+      - ./config/vpn-proxy:/etc/nginx
+    networks:
+      - isolated_torrents
+      - web
+    links:
+      - vpn:deluge
+      - vpn:prowlarr
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+      - traefik.enable=true
+      # Deluge proxy
+      - traefik.http.routers.deluge-local.entrypoints=websecure
+      - traefik.http.routers.deluge-local.rule=Host(`deluge.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.deluge-local.tls.certresolver=myresolver
+      - traefik.http.routers.deluge-local.service=service-deluge
+      - traefik.http.services.service-deluge.loadbalancer.server.port=8112
+      # Prowlarr proxy
+      - traefik.http.routers.prowlarr-local.entrypoints=websecure
+      - traefik.http.routers.prowlarr-local.rule=Host(`prowlarr.${LOCAL_DOMAIN}`)
+      - traefik.http.routers.prowlarr-local.tls.certresolver=myresolver
+      - traefik.http.routers.prowlarr-local.service=service-prowlarr
+      - traefik.http.services.service-prowlarr.loadbalancer.server.port=9696
+
+volumes:
+  media:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_ADDRESS}
+      device: :${NAS_MEDIA}
+
+  downloads:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=${NAS_ADDRESS}
+      device: :${NAS_DOWNLOADS}
+
+networks:
+  isolated_torrents:
+
+  web:
+    external: true
