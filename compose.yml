@@ -161,11 +161,11 @@ services:
       - com.centurylinklabs.watchtower.enable=true
 
   # Proxy to access download client and indexer manager
-  vpn-proxy:
+  vpn-reverse-proxy:
     image: nginx
     restart: unless-stopped
     volumes:
-      - ./config/vpn-proxy:/etc/nginx
+      - ./config/vpn-reverse-proxy:/etc/nginx
     networks:
       - isolated_torrents
       - web
